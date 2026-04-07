@@ -1,0 +1,16 @@
+# Python sanal ortam (virtual environment)
+venv/
+.venv/
+env/
+
+# Derlenmiş dosyalar
+__pycache__/
+*.py[cod]
+
+# Veri setleri veya büyük dosyalar (varsa)
+*.csv
+*.log
+
+# VS Code veya PyCharm ayarları
+.vscode/
+.idea/
