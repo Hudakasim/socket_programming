@@ -5,7 +5,6 @@ sys.path.append("..")
 
 import client
 
-
 class ChatApp:
     def __init__(self, root):
         self.root = root
@@ -87,6 +86,7 @@ class ChatApp:
         )
         self.login_error.pack()
 
+
     def _on_join(self, event=None):
         username = self.username_input.get().strip()
 
@@ -97,6 +97,7 @@ class ChatApp:
         self.username = username
 
         try:
+            # send client's username to the connect function (client.py)
             self.sock = client.connect(self.username)
         except Exception as e:
             self.login_error.config(text=f"Could not connect: {e}")
@@ -199,10 +200,14 @@ class ChatApp:
         message = self.message_input.get().strip()
         if not message or not self.sock:
             return
+        # for send the message we call the send_message function (client.py)
         client.send_message(self.sock, message)
+
         self._append_message(f"[You]: {message}\n", tag="self")
         self.message_input.delete(0, tk.END)
 
+
+    # write the messages other clients sent
     def _poll_queue(self):
         while not client.message_queue.empty():
             message = client.message_queue.get()
