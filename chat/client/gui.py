@@ -4,6 +4,8 @@ import sys
 sys.path.append("..")
 
 import client
+from shared.protocol import TYPE_MESSAGE, TYPE_SERVER, TYPE_ERROR
+
 
 class ChatApp:
     def __init__(self, root):
@@ -86,6 +88,7 @@ class ChatApp:
         self.login_error.pack()
 
 
+     # take the username typed and passes it to the backend
     def _on_join(self, event=None):
         username = self.username_input.get().strip()
 
@@ -104,7 +107,7 @@ class ChatApp:
 
         self.login_frame.destroy()
         self._build_chat_screen()
-        self._append_message(f"Connected as {self.username}\n", tag="server")
+        # start polling only after chat screen widgets exist
         self.root.after(100, self._poll_queue)
 
     # -------------------------------------------------------------------------
@@ -195,25 +198,42 @@ class ChatApp:
     # Send & Receive
     # -------------------------------------------------------------------------
 
+    # pushs the chat text own to the network layer
     def _on_send(self, event=None):
-        message = self.message_input.get().strip()
-        if not message or not self.sock:
-            return
-        # for send the message we call the send_message function (client.py)
-        client.send_message(self.sock, message)
+        text = self.message_input.get().strip()
 
-        self._append_message(f"[You]: {message}\n", tag="self")
+        if not text or not self.sock:
+            return
+
+        # for send the message we call the send_message function (client.py)
+        client.send_message(self.sock, self.username, text)
+
+        # prints the message on your own screen
+        self._append_message(f"[You]: {text}\n", tag="self")
+        # clear the inpur box
         self.message_input.delete(0, tk.END)
 
 
     # write the messages other clients sent
     def _poll_queue(self):
-        while not client.message_queue.empty():
-            message = client.message_queue.get()
-            if message.startswith("[Server]:"):
-                self._append_message(message + "\n", tag="server")
-            else:
-                self._append_message(message + "\n", tag="other")
+        while not client.packet_queue.empty():
+            packet = client.packet_queue.get()
+            packet_type = packet.get("type")
+
+            if packet_type == TYPE_MESSAGE:
+                username = packet.get("username", "?")
+                text = packet.get("text", "")
+                self._append_message(f"{username}: {text}\n", tag="other")
+
+            elif packet_type == TYPE_SERVER:
+                text = packet.get("text", "")
+                self._append_message(f"[Server]: {text}\n", tag="server")
+
+            elif packet_type == TYPE_ERROR:
+                text = packet.get("text", "")
+                self._append_message(f"[ERROR]: {text}\n", tag="error")
+
+        # loops back and checks again after 100ms later
         self.root.after(100, self._poll_queue)
 
     def _append_message(self, message, tag="other"):

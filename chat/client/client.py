@@ -4,63 +4,42 @@ import queue
 import sys
 sys.path.append("..")
 
-from shared.protocol import CLIENT_HOST, PORT, BUFFER_SIZE
+from shared.protocol import (
+    CLIENT_HOST, PORT,
+    TYPE_JOIN, TYPE_MESSAGE,
+    send_packet, recv_packet
+    )
 
 # this queue is the bridge between the network thread and whatever UI you use
-message_queue = queue.Queue()
+packet_queue = queue.Queue()
 
 
-def receive_messages(sock):
-    """Runs in a background thread — receives and queues incoming messages."""
+def receive_loop(sock):
+    # background thread - recv packets and puts them in the Q
     while True:
-        try:
-            message = sock.recv(BUFFER_SIZE)
-            if not message:
-                message_queue.put("[Server]: Connection closed.")
-                break
-            message_queue.put(message.decode())
-        except:
-            message_queue.put("[Server]: Lost connection.")
+        packet = recv_packet(sock)
+        if not packet:
+            packet_queue.put({"type": "error", "text": "Lost connection to server"})
             break
+        packet_queue.put(packet)
 
 
-def send_message(sock, message):
-    """Call this to send a message to the server."""
-    try:
-        sock.send(message.encode())
-    except:
-        print("[!] Failed to send message.")
+def send_message(sock, username, text):
+    # send a chat message packet
+    send_packet(sock, {"type": TYPE_MESSAGE, "username": username, "text": text})
 
 
-def connect(username):
-    """
-    Connect to the server and return the socket.
-    Sends username immediately after connecting.
-    """
+def connect(username) -> socket.socket:
+    # connect -> send join packet, start recv thread -> returns the socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((CLIENT_HOST, PORT))
 
-    # first thing we send is always the username
-    sock.send(username.encode())
+    # first thing we send is always a join packet
+    send_packet(sock, {"type": TYPE_JOIN, "username": username})
 
-    # start background thread for receiving
-    recv_thread = threading.Thread(target=receive_messages, args=(sock,))
+    # start background recv thread
+    recv_thread = threading.Thread(target=receive_loop, args=(sock,))
     recv_thread.daemon = True
     recv_thread.start()
 
     return sock
-
-
-if __name__ == "__main__":
-    username = input("Enter your username: ")
-    sock = connect(username)
-    print(f"Connected as {username}. Type 'quit' to exit.\n")
-
-    while True:
-        msg = input()
-        if msg.lower() == "quit":
-            break
-        send_message(sock, msg)
-        print(f"[{username}]: {msg}")
-
-    sock.close()
