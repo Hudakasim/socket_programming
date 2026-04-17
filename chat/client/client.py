@@ -37,6 +37,20 @@ def connect(username) -> socket.socket:
     # first thing we send is always a join packet
     send_packet(sock, {"type": TYPE_JOIN, "username": username})
 
+    # after send the JOIN packet we wait to see the response from server
+    response = recv_packet(sock)
+
+    if not response:
+        sock.close()
+        raise Exception("Server dropped the connection without answering.")
+
+    if response.get("type") == "error":
+        sock.close()
+        raise Exception(response.get("text"))
+
+    # no error the server accept the client:
+    packet_queue.put(response)
+
     # start background recv thread
     recv_thread = threading.Thread(target=receive_loop, args=(sock,))
     recv_thread.daemon = True

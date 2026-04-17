@@ -22,6 +22,8 @@ def send_packet(sock, packet: dict):
     raw = json.dumps(packet).encode("utf-8")
 
     # packs the length into 4 byte header
+    # ! -> network byte order(big-endian)
+    # I -> unsigned int
     length = struct.pack("!I", len(raw))
 
     sock.sendall(length + raw)
