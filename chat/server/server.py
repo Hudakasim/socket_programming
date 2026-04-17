@@ -4,7 +4,7 @@ import sys
 sys.path.append("..")
 
 from shared.protocol import (
-    HOST, PORT, TYPE_MESSAGE, TYPE_JOIN, TYPE_SERVER, TYPE_ERROR,
+    HOST, PORT, TYPE_MESSAGE, TYPE_JOIN, TYPE_SERVER, TYPE_ERROR, TYPE_PRIVATE,
     send_packet, recv_packet
 )
 
@@ -22,6 +22,33 @@ def broadcast(packet: dict, exlude_conn=None):
                 send_packet(conn, packet)
             except:
                 clients.remove((conn, addr, username))
+
+def send_private(from_username, to_username, text, sender_conn):
+    target_conn = None
+    with lock:
+        for conn, addr, username in clients:
+            if username == to_username:
+                target_conn = conn
+                break
+
+    if not target_conn:
+        # user not found
+        return False
+
+    send_packet(target_conn, {
+        "type": TYPE_PRIVATE,
+        "to": from_username,
+        "text": text
+    })
+
+    send_packet(sender_conn, {
+        "type": TYPE_PRIVATE,
+        "from": "You",
+        "to": to_username,
+        "text": text
+    })
+
+    return True
 
 
 def handle_client(conn, addr):
@@ -59,7 +86,7 @@ def handle_client(conn, addr):
 
     broadcast({"type": TYPE_SERVER, 'text': f"{username} has joined teh chat!"}, exlude_conn=conn)
 
-    send_packet(conn, {"type": TYPE_SERVER, "text": f"Welcom {username} ({len(clients)} user(s) online)"})
+    send_packet(conn, {"type": TYPE_SERVER, "text": f"Welcom {username} ({len(clients)-1} user(s) online)"})
 
     while True:
         packet = recv_packet(conn)
@@ -76,6 +103,18 @@ def handle_client(conn, addr):
 
             # broadcast to everyone (except the sender)
             broadcast({"type": TYPE_MESSAGE, "username": username, "text": text}, exlude_conn=conn)
+        elif packet_type == TYPE_PRIVATE:
+            to = packet.get("to", "").strip()
+            text = packet.get("text", "")
+
+            if to == username:
+                send_packet(conn, {"type": TYPE_ERROR, "text": "You can't message yourself"})
+                continue
+
+            success = send_private(username, to, text, conn)
+
+            if not success:
+                send_packet(conn, {"type": TYPE_ERROR, "text": f"User 'to' not found or not online"})
         else:
             print(f"[!] Unknown packet type from {username}: {packet_type}")
 

@@ -4,7 +4,7 @@ import sys
 sys.path.append("..")
 
 import client
-from shared.protocol import TYPE_MESSAGE, TYPE_SERVER, TYPE_ERROR
+from shared.protocol import TYPE_MESSAGE, TYPE_SERVER, TYPE_ERROR, TYPE_PRIVATE
 
 
 class ChatApp:
@@ -205,11 +205,26 @@ class ChatApp:
         if not text or not self.sock:
             return
 
-        # for send the message we call the send_message function (client.py)
-        client.send_message(self.sock, self.username, text)
+        if text.startswith("/msg"):
+            # ["/msg", "Bob", "hello"]
+            parts = text.split(" ", 2)
+            if len(parts) < 3:
+                self._append_message(
+                    "Usage: /msg <username> <message>\n", tag="error"
+                )
+                self.message_input.delete(0, tk.END)
+                return
+            to_username = parts[1]
+            private_text = parts[2]
+            client.send_private(self.sock, to_username, private_text)
 
-        # prints the message on your own screen
-        self._append_message(f"[You]: {text}\n", tag="self")
+        else:
+            # for send the message we call the send_message function (client.py)
+            client.send_message(self.sock, self.username, text)
+
+            # prints the message on your own screen
+            self._append_message(f"[You]: {text}\n", tag="self")
+
         # clear the inpur box
         self.message_input.delete(0, tk.END)
 
@@ -232,6 +247,21 @@ class ChatApp:
             elif packet_type == TYPE_ERROR:
                 text = packet.get("text", "")
                 self._append_message(f"[ERROR]: {text}\n", tag="error")
+
+            elif packet_type == TYPE_PRIVATE:
+                # the sender's echo
+                if "to" in packet:
+                    self._append_message(
+                        f"[Private msg from {packet['to']}]: {packet['text']}\n",
+                        tag="private"
+                    )
+
+                # recipient seeing incoming msg
+                else:
+                    self._append_message(
+                        f"[Private msg from {packet['from']}]: {packet['text']}\n",
+                        tag="private"
+                    )
 
         # loops back and checks again after 100ms later
         self.root.after(100, self._poll_queue)

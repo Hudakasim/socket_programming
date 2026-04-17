@@ -14,6 +14,7 @@ TYPE_JOIN = "join"
 TYPE_LEAVE = "leave"
 TYPE_SERVER = "server"
 TYPE_ERROR = "error"
+TYPE_PRIVATE = "private"
 
 # ===== Packet Helper =======
 

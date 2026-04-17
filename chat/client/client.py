@@ -6,7 +6,7 @@ sys.path.append("..")
 
 from shared.protocol import (
     CLIENT_HOST, PORT,
-    TYPE_JOIN, TYPE_MESSAGE,
+    TYPE_JOIN, TYPE_MESSAGE, TYPE_PRIVATE,
     send_packet, recv_packet
     )
 
@@ -28,6 +28,13 @@ def send_message(sock, username, text):
     # send a chat message packet
     send_packet(sock, {"type": TYPE_MESSAGE, "username": username, "text": text})
 
+
+def send_private(sock, to_username, text):
+    send_packet(sock, {
+        "type": TYPE_PRIVATE,
+        "to": to_username,
+        "text": text
+    })
 
 def connect(username) -> socket.socket:
     # connect -> send join packet, start recv thread -> returns the socket
