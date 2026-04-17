@@ -15,6 +15,13 @@ TYPE_LEAVE = "leave"
 TYPE_SERVER = "server"
 TYPE_ERROR = "error"
 TYPE_PRIVATE = "private"
+TYPE_DISCONNECTED = "disconnected"
+TYPE_RECONNECTED = "reconnected"
+
+# === Reconnecting Settings ====
+RECONNECT_ATTEMPTS = 5
+RECONNECT_BASE = 2
+RECONNECT_MAX = 30
 
 # ===== Packet Helper =======
 
