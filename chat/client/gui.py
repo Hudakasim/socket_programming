@@ -4,7 +4,7 @@ import sys
 sys.path.append("..")
 
 import client
-from shared.protocol import TYPE_MESSAGE, TYPE_SERVER, TYPE_ERROR, TYPE_PRIVATE
+from shared.protocol import TYPE_MESSAGE, TYPE_SERVER, TYPE_ERROR, TYPE_PRIVATE, TYPE_RECONNECTED, TYPE_DISCONNECTED
 
 
 class ChatApp:
@@ -33,60 +33,33 @@ class ChatApp:
         self.login_frame = tk.Frame(self.root, bg="#1e1e2e")
         self.login_frame.pack(expand=True)
 
-        tk.Label(
-            self.login_frame,
-            text="Python Chat",
-            bg="#1e1e2e",
-            fg="#cdd6f4",
-            font=("TkDefaultFont", 22, "bold")
-        ).pack(pady=(0, 6))
+        tk.Label(self.login_frame, text="Python Chat", bg="#1e1e2e",
+                 fg="#cdd6f4", font=("TkDefaultFont", 22, "bold")).pack(pady=(0, 6))
 
-        tk.Label(
-            self.login_frame,
-            text="Enter a username to join",
-            bg="#1e1e2e",
-            fg="#6c7086",
-            font=("TkDefaultFont", 11)
-        ).pack(pady=(0, 24))
+        tk.Label(self.login_frame, text="Enter a username to join", bg="#1e1e2e",
+                 fg="#6c7086", font=("TkDefaultFont", 11)).pack(pady=(0, 24))
 
         self.username_input = tk.Entry(
-            self.login_frame,
-            bg="#313244",
-            fg="#cdd6f4",
-            font=("TkDefaultFont", 13),
-            relief=tk.FLAT,
-            insertbackground="#cdd6f4",
-            justify=tk.CENTER,
-            width=22
+            self.login_frame, bg="#313244", fg="#cdd6f4",
+            font=("TkDefaultFont", 13), relief=tk.FLAT,
+            insertbackground="#cdd6f4", justify=tk.CENTER, width=22
         )
         self.username_input.pack(ipady=8)
         self.username_input.focus()
         self.username_input.bind("<Return>", self._on_join)
 
         tk.Button(
-            self.login_frame,
-            text="Join Chat",
-            command=self._on_join,
-            bg="#89b4fa",
-            fg="#1e1e2e",
-            font=("TkDefaultFont", 12, "bold"),
-            relief=tk.FLAT,
-            padx=20,
-            pady=8,
-            cursor="hand2",
-            activebackground="#b4befe",
-            activeforeground="#1e1e2e"
+            self.login_frame, text="Join Chat", command=self._on_join,
+            bg="#89b4fa", fg="#1e1e2e", font=("TkDefaultFont", 12, "bold"),
+            relief=tk.FLAT, padx=20, pady=8, cursor="hand2",
+            activebackground="#b4befe", activeforeground="#1e1e2e"
         ).pack(pady=16)
 
         self.login_error = tk.Label(
-            self.login_frame,
-            text="",
-            bg="#1e1e2e",
-            fg="#f38ba8",
-            font=("TkDefaultFont", 10)
+            self.login_frame, text="", bg="#1e1e2e",
+            fg="#f38ba8", font=("TkDefaultFont", 10)
         )
         self.login_error.pack()
-
 
      # take the username typed and passes it to the backend
     def _on_join(self, event=None):
@@ -117,50 +90,40 @@ class ChatApp:
     def _build_chat_screen(self):
         self.root.title(f"Python Chat  —  {self.username}")
 
-        # title bar
         title_frame = tk.Frame(self.root, bg="#181825", pady=10)
         title_frame.pack(fill=tk.X)
+        tk.Label(title_frame, text="Python Chat", bg="#181825",
+                 fg="#cdd6f4", font=("TkDefaultFont", 15, "bold")).pack()
 
-        tk.Label(
-            title_frame,
-            text="Python Chat",
-            bg="#181825",
-            fg="#cdd6f4",
-            font=("TkDefaultFont", 15, "bold")
-        ).pack()
-
-        # chat display
         main_frame = tk.Frame(self.root, bg="#1e1e2e")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
 
         self.chat_display = scrolledtext.ScrolledText(
-            main_frame,
-            state=tk.DISABLED,
-            wrap=tk.WORD,
-            bg="#181825",
-            fg="#cdd6f4",
-            font=("TkDefaultFont", 11),
-            relief=tk.FLAT,
-            padx=10,
-            pady=10,
+            main_frame, state=tk.DISABLED, wrap=tk.WORD,
+            bg="#181825", fg="#cdd6f4", font=("TkDefaultFont", 11),
+            relief=tk.FLAT, padx=10, pady=10,
         )
         self.chat_display.pack(fill=tk.BOTH, expand=True)
 
-        self.chat_display.tag_config("server", foreground="#a6e3a1")  # green
-        self.chat_display.tag_config("self",   foreground="#89b4fa")  # blue
-        self.chat_display.tag_config("other",  foreground="#cdd6f4")  # white
-        self.chat_display.tag_config("error",  foreground="#f38ba8")  # red
+        self.chat_display.tag_config("server",  foreground="#a6e3a1")  # green
+        self.chat_display.tag_config("self",    foreground="#89b4fa")  # blue
+        self.chat_display.tag_config("other",   foreground="#cdd6f4")  # white
+        self.chat_display.tag_config("error",   foreground="#f38ba8")  # red
+        self.chat_display.tag_config("private", foreground="#f9e2af")  # yellow
+        self.chat_display.tag_config("warning", foreground="#fab387")  # orange
 
-        # input row
+        tk.Label(
+            self.root,
+            text="Tip: /msg <username> <text>  for private messages",
+            bg="#1e1e2e", fg="#585b70", font=("TkDefaultFont", 8)
+        ).pack(pady=(6, 0))
+
         input_frame = tk.Frame(self.root, bg="#1e1e2e", pady=10)
         input_frame.pack(fill=tk.X, padx=10)
 
         self.message_input = tk.Entry(
-            input_frame,
-            bg="#313244",
-            fg="#cdd6f4",
-            font=("TkDefaultFont", 12),
-            relief=tk.FLAT,
+            input_frame, bg="#313244", fg="#cdd6f4",
+            font=("TkDefaultFont", 12), relief=tk.FLAT,
             insertbackground="#cdd6f4",
         )
         self.message_input.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, padx=(0, 8))
@@ -168,30 +131,18 @@ class ChatApp:
         self.message_input.focus()
 
         tk.Button(
-            input_frame,
-            text="Send",
-            command=self._on_send,
-            bg="#89b4fa",
-            fg="#1e1e2e",
-            font=("TkDefaultFont", 11, "bold"),
-            relief=tk.FLAT,
-            padx=16,
-            pady=6,
-            cursor="hand2",
-            activebackground="#b4befe",
-            activeforeground="#1e1e2e"
+            input_frame, text="Send", command=self._on_send,
+            bg="#89b4fa", fg="#1e1e2e", font=("TkDefaultFont", 11, "bold"),
+            relief=tk.FLAT, padx=16, pady=6, cursor="hand2",
+            activebackground="#b4befe", activeforeground="#1e1e2e"
         ).pack(side=tk.RIGHT)
 
-        # status bar
+        # dynamic status bar — we keep a reference to update it later
+        self.status_var = tk.StringVar(value=f"Connected as {self.username}")
         tk.Label(
-            self.root,
-            text=f"Connected as {self.username}",
-            bg="#181825",
-            fg="#6c7086",
-            font=("TkDefaultFont", 9),
-            anchor=tk.W,
-            padx=10,
-            pady=4
+            self.root, textvariable=self.status_var,
+            bg="#181825", fg="#6c7086", font=("TkDefaultFont", 9),
+            anchor=tk.W, padx=10, pady=4
         ).pack(fill=tk.X, side=tk.BOTTOM)
 
     # -------------------------------------------------------------------------
@@ -262,6 +213,33 @@ class ChatApp:
                         f"[Private msg from {packet['from']}]: {packet['text']}\n",
                         tag="private"
                     )
+            elif packet_type == TYPE_DISCONNECTED:
+                text = packet.get("text", "Disconnected")
+                self._append_message(f"\n[!] {text}\n", tag="warning")
+                self.status_var.set("Disconnected - reconnecting...")
+                # disable input -< user can't send while disconnected
+                self.message_input.config(state=tk.DISABLED)
+
+                if packet.get("fatal"):
+                    self.status_var.set("Connection lost. Please restart")
+
+            elif packet_type == "reconnecting":
+                attempt = packet.get("attempt")
+                max = packet.get("max")
+                wait = packet.get("wait")
+                self.status_var.set(f"Reconnecting... attemt {attempt}/{max} (wait {wait}s)")
+                self._append_message(
+                    f"[!] Reconnecting... attempt {attempt} / {max}\n", tag="warning"
+                )
+                self.message_input.config(state=tk.DISABLED)
+
+            elif packet_type == TYPE_RECONNECTED:
+                self._append_message(f"\n[+] {packet.get('text', 'Reconnected!')}", tag="server")
+                self.status_var.set(f"Connected as {self.username}")
+
+                # reunable input
+                self.message_input.config(state=tk.NORMAL)
+                self.message_input.focus()
 
         # loops back and checks again after 100ms later
         self.root.after(100, self._poll_queue)
