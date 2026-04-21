@@ -3,14 +3,20 @@ import threading
 import sys
 sys.path.append("..")
 
-from shared.protocol import (
-    HOST, PORT, TYPE_MESSAGE, TYPE_JOIN, TYPE_SERVER, TYPE_ERROR, TYPE_PRIVATE,
-    send_packet, recv_packet
-)
+from shared.protocol import *
 
 # each entry will be (conn, addr, username)
 clients = []
 lock = threading.Lock()
+
+pending_offers = {}
+
+def get_conn_by_username(username):
+    with lock:
+        for conn, addr, uname in clients:
+            if uname == username:
+                return conn
+    return None
 
 def broadcast(packet: dict, exlude_conn=None):
     # send a message to every client except the sender
@@ -24,12 +30,7 @@ def broadcast(packet: dict, exlude_conn=None):
                 clients.remove((conn, addr, username))
 
 def send_private(from_username, to_username, text, sender_conn):
-    target_conn = None
-    with lock:
-        for conn, addr, username in clients:
-            if username == to_username:
-                target_conn = conn
-                break
+    target_conn = get_conn_by_username(to_username)
 
     if not target_conn:
         # user not found
@@ -49,6 +50,69 @@ def send_private(from_username, to_username, text, sender_conn):
     })
 
     return True
+
+# def forward_file_offer(packet, sender_conn, sender_username):
+#     to = packet.get("to", "")
+#     target_conn = get_conn_by_username(to)
+
+#     if not target_conn:
+#         send_packet(sender_conn, {
+#             "type": TYPE_ERROR,
+#             "text": f"User '{to}' not found"
+#         })
+#         return
+#     packet["from"] = sender_username
+#     send_packet(target_conn, packet)
+
+
+# def forwa_response(packet, responder_username):
+#     to = packet.get("to", "")
+#     target_conn = get_conn_by_username(to)
+
+#     if not target_conn:
+#         return
+#     packet["from"] = responder_username
+#     send_packet(target_conn, packet)
+
+def forward_file_chunks(sender_conn, receiver_conn, sender_username, filename, filesize, transfer_done):
+    # target_conn = get_conn_by_username(to_username)
+    # if not target_conn:
+    #     send_packet(sender_conn, {"type": TYPE_ERROR, "text": "Recipient disconnected"})
+    #     return
+
+    bytes_forwarded = 0
+
+    try:
+        while bytes_forwarded < filesize:
+            chunk = recv_chunk(sender_conn)
+            if not chunk:
+                print(f"[file] connection lost during transfer of {filename}")
+                break
+            send_chunk(receiver_conn, chunk)
+            bytes_forwarded += len(chunk)
+    except OSError as e:
+        print(f"[file] transfer error during {filename}: {e}")
+
+    try:
+        send_packet(receiver_conn, {
+            "type": TYPE_FILE_DONE,
+            "filename": filename,
+            "from": sender_username
+        })
+    except OSError:
+        print(f"[file] could not notify receiver: {filename}")
+
+    try:
+        send_packet(sender_conn, {
+            "type": TYPE_FILE_DONE,
+            "filename": filename,
+            "to": sender_username
+        })
+    except OSError:
+        print(f"[file] could not notify sender: {filename}")
+
+    print(f"[file] {sender_username} → {filename} ({bytes_forwarded}/{filesize} bytes)")
+    transfer_done.set()
 
 
 def handle_client(conn, addr):
@@ -82,9 +146,10 @@ def handle_client(conn, addr):
     # ======== register client and announce it ==========
     with lock:
         clients.append((conn, addr, username))
+
     print(f"[+] {username} connected from {addr}. Total: {len(clients)}")
 
-    broadcast({"type": TYPE_SERVER, 'text': f"{username} has joined teh chat!"}, exlude_conn=conn)
+    broadcast({"type": TYPE_SERVER, 'text': f"{username} has joined the chat!"}, exlude_conn=conn)
 
     send_packet(conn, {"type": TYPE_SERVER, "text": f"Welcom {username} ({len(clients)-1} user(s) online)"})
 
@@ -103,6 +168,7 @@ def handle_client(conn, addr):
 
             # broadcast to everyone (except the sender)
             broadcast({"type": TYPE_MESSAGE, "username": username, "text": text}, exlude_conn=conn)
+
         elif packet_type == TYPE_PRIVATE:
             to = packet.get("to", "").strip()
             text = packet.get("text", "")
@@ -115,10 +181,88 @@ def handle_client(conn, addr):
 
             if not success:
                 send_packet(conn, {"type": TYPE_ERROR, "text": f"User 'to' not found or not online"})
+
+        elif packet_type == TYPE_FILE_OFFER:
+            to       = packet.get("to", "")
+            filename = packet.get("filename")
+            filesize = packet.get("filesize")
+
+            target_conn = get_conn_by_username(to)
+            if not target_conn:
+                send_packet(conn, {"type": TYPE_ERROR, "text": f"User '{to}' not found."})
+                continue
+
+            transfer_done = threading.Event()
+
+            # store the offer so we can look it up when receiver accepts
+            pending_offers[(username, filename)] = {
+                "filesize": filesize,
+                "sender_conn": conn,
+                "to": to,
+                "transfer_done": transfer_done
+            }
+
+            # forward offer to receiver
+            send_packet(target_conn, {
+                "type": TYPE_FILE_OFFER,
+                "from": username,
+                "filename": filename,
+                "filesize": filesize
+            })
+            # BLOCK the sender's loop here until transfer is done or rejected
+            print(f"[file] {username} offering '{filename}' to {to} — sender paused")
+            transfer_done.wait()
+            print(f"[file] sender {username} resumed after '{filename}'")
+
+        elif packet_type == TYPE_FILE_ACCEPT:
+            # this runs in the RECEIVER's thread
+            from_username = packet.get("to")
+            filename = packet.get("filename")
+            filesize = packet.get("filesize")
+
+            offer_key = (from_username, filename)
+            offer = pending_offers.pop(offer_key, None)
+
+            if not offer:
+                send_packet(conn, {"type": TYPE_ERROR, "text": "File offer not found or expired."})
+                continue
+
+            sender_conn = offer["sender_conn"]
+            transfer_done = offer["transfer_done"]
+
+            # tell sender to start sending chunks
+            send_packet(sender_conn, {
+                "type": TYPE_FILE_ACCEPT,
+                "from": username,
+                "filename": filename,
+                "filesize": filesize
+            })
+
+            # NOW block this thread to forward chunks
+            # recv_packet() won't be called again until this returns
+            forward_file_chunks(sender_conn, conn, from_username, filename, filesize, transfer_done)
+
+        elif packet_type == TYPE_FILE_REJECT:
+            from_username = packet.get("to")
+            filename      = packet.get("filename")
+
+            offer_key = (from_username, filename)
+            pending_offers.pop(offer_key, None)
+
+            sender_conn = get_conn_by_username(from_username)
+            if sender_conn:
+                send_packet(sender_conn, {
+                    "type": TYPE_FILE_REJECT,
+                    "from": username,
+                    "filename": filename
+                })
+            # unblock the sender's loop even on rejection
+            if offer:
+                offer["transfer_done"].set()
         else:
             print(f"[!] Unknown packet type from {username}: {packet_type}")
 
-    # ======== cleanup when dicconnect =============
+    # ======= cleanup when dicconnect =========
     with lock:
         if (conn, addr, username) in clients:
             clients.remove((conn, addr, username))
@@ -135,7 +279,7 @@ def start_server():
     server.listen()
 
     print(f"Server started on {HOST}:{PORT}")
-    print(f"Witing for connections....\n")
+    print(f"Waiting for connections....\n")
 
     while True:
         try:
