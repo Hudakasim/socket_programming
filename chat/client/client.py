@@ -3,6 +3,7 @@ import threading
 import queue
 import sys
 import time
+import os
 sys.path.append("..")
 
 from shared.protocol import *
@@ -15,18 +16,190 @@ _username = None
 _lock = threading.Lock()
 
 
+DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+_pending_files = {}
+
 def receive_loop(sock):
     # background thread - recv packets and puts them in the Q
     while True:
-        packet = recv_packet(sock)
+        # check if we need to start receiving a file inline
+        if not _file_accept_queue.empty():
+            from_username, filename, filesize = _file_accept_queue.get()
+
+            sock.settimeout(None)
+            send_packet(sock, {
+                "type": TYPE_FILE_ACCEPT,
+                "to": from_username,
+                "filename": filename,
+                "filesize": filesize
+            })
+            
+            receive_file_chunks(sock, filename, filesize, from_username)
+            continue
+
+        # set a timeout so we can check the queue periodically
+        sock.settimeout(0.1)
+        try:
+            packet = recv_packet(sock)
+        except:
+            continue   # timeout — loop back and check _file_accept_queue again
+
+        sock.settimeout(None)  # restore blocking mode after successful read
+
         if not packet:
-            packet_queue.put({"type": "error", "text": "Lost connection to server"})
+            packet_queue.put({"type": TYPE_DISCONNECTED, "text": "Lost connection to server"})
             # start reconnect attempt in a new thread
             thread = threading.Thread(target=reconnect_loop)
             thread.daemon = True
             thread.start()
             break
-        packet_queue.put(packet)
+
+        packet_type = packet.get("type")
+
+        if packet_type == TYPE_FILE_ACCEPT:
+            thread = threading.Thread(
+                target = send_file_chunks,
+                args = (sock, packet.get("filename"), packet.get("filesize"), packet.get("from"))
+            )
+            thread.daemon = True
+            thread.start()
+        else:
+            packet_queue.put(packet)
+
+def send_file_offer(to_username, filepath):
+    with _lock:
+        sock = _sock
+    filename = os.path.basename(filepath)
+    filesize = os.path.getsize(filepath)
+    _pending_files[filename] = filepath
+
+    send_packet(sock, {
+            "type": TYPE_FILE_OFFER,
+            "to": to_username,
+            "filename": filename,
+            "filesize": filesize,
+            "filepath": filepath
+        })
+
+    packet_queue.put({
+            "type": "file_waiting",
+            "filename": filename,
+            "to": to_username
+        })
+
+def send_file_chunks(sock, filename, filesize, to_username):
+    filepath = _pending_files.get(filename)
+    if not filepath or not os.path.exists(filepath):
+        packet_queue.put({"type": "error", "text": f"file not found: {filename}"})
+        return
+
+    filesize = os.path.getsize(filepath)
+    bytes_sent = 0
+
+    packet_queue.put({
+        "type": "file_progress",
+        "filename": filename,
+        "to": to_username,
+        "percent": 0
+    })
+
+    with open(filepath, "rb") as f:
+        while True:
+            chunk = f.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            send_chunk(sock, chunk)
+            bytes_sent += len(chunk)
+            percent = int(bytes_sent / filesize * 100)
+
+            packet_queue.put({
+                "type": "file_progress",
+                "filename": filename,
+                "to": to_username,
+                "percent": percent
+            })
+
+    packet_queue.put({
+        "type": "'file_sent",
+        "filename": filename,
+        "to": to_username
+    })
+
+
+def receive_file_chunks(sock, filename, filesize, from_username):
+    filepath = os.path.join(DOWNLOADS_DIR, filename)
+    bytes_recv = 0
+
+    print(f"[recv] starting — expecting {filesize} bytes")
+
+    packet_queue.put({
+        "type": "file_progress",
+        "filename": filename,
+        "from": from_username,
+        "percent": 0
+    })
+
+    try:
+        with open(filepath, "wb") as f:
+            while bytes_recv < filesize:
+                chunk = recv_chunk(sock)
+                if not chunk:
+                    print(f"[recv] recv_chunk returned None at {bytes_recv}/{filesize}")
+                    break
+
+                f.write(chunk)
+                bytes_recv += len(chunk)
+                percent = int(bytes_recv / filesize * 100)
+                print(f"[recv] got chunk {len(chunk)} bytes, total {bytes_recv}/{filesize} ({percent}%)")
+
+                packet_queue.put({
+                    "type": "file_progress",
+                    "filename": filename,
+                    "from": from_username,
+                    "percent": percent
+                })
+        print(f"[recv] done — {bytes_recv}/{filesize} bytes")
+
+    except Exception as e:
+        packet_queue.put({"type": "error", "text": f"File receive error: {e}"})
+        return
+
+    packet_queue.put({
+        "type"    : "file_received",
+        "filename": filename,
+        "from"    : from_username,
+        "filepath": filepath
+    })
+
+    done = recv_packet(sock)
+    if done:
+        packet_queue.put(done)
+
+def accept_file(from_username, filename, filesize):
+    # with _lock:
+    #     sock = _sock
+
+    # send_packet(sock, {
+    #     "type": TYPE_FILE_ACCEPT,
+    #     "to": from_username,
+    #     "filename": filename,
+    #     "filesize": filesize
+    # })
+
+    _file_accept_queue.put((from_username, filename, filesize))
+
+def reject_file(from_username, filename):
+    with _lock:
+        sock = _sock
+    send_packet(sock, {
+        "type": TYPE_FILE_REJECT,
+        "to": from_username,
+        "filename": filename
+    })
+
+_file_accept_queue = queue.Queue()
 
 def reconnect_loop():
     global _sock
@@ -60,9 +233,9 @@ def reconnect_loop():
                 "text": f"Reconnected as {_username}"
             })
             return
+
         except Exception as e:
             print(f"[reconnect] attempt {attempt} failed: {e}")
-
             wait = min(wait * 2, RECONNECT_MAX)
 
     packet_queue.put({

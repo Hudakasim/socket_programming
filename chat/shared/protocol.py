@@ -7,6 +7,7 @@ HOST = "0.0.0.0"
 CLIENT_HOST = "10.10.190.64"
 PORT = 9090
 BUFFER_SIZE = 4096
+CHUNK_SIZE = 4096
 
 # ====== Message Types ======
 TYPE_MESSAGE = "message"
@@ -17,6 +18,13 @@ TYPE_ERROR = "error"
 TYPE_PRIVATE = "private"
 TYPE_DISCONNECTED = "disconnected"
 TYPE_RECONNECTED = "reconnected"
+
+# ==== file Transfer Type ====
+TYPE_FILE_OFFER  = "file_offer"
+TYPE_FILE_ACCEPT = "file_accept"
+TYPE_FILE_REJECT  = "file_reject"
+TYPE_FILE_CHUNK = "file_chunk"
+TYPE_FILE_DONE = "file_done"
 
 # === Reconnecting Settings ====
 RECONNECT_ATTEMPTS = 5
@@ -51,6 +59,16 @@ def recv_packet(sock) -> dict:
 
     return json.loads(raw.decode("utf-8"))
 
+def send_chunk(sock, data: bytes):
+    length = struct.pack("!I", len(data))
+    sock.sendall(length + data)
+
+def recv_chunk(sock) -> bytes:
+    raw_length = _recv_exactly(sock, 4)
+    if not raw_length:
+        return None
+    length = struct.unpack("!I", raw_length)[0]
+    return _recv_exactly(sock, length)
 
 # keep reading until we have exactly n bytes
 # prevent the app from crush if a msg arrived in pieces!!!

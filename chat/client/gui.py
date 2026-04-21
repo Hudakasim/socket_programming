@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import scrolledtext, filedialog, simpledialog
 import sys
 sys.path.append("..")
+import os
 
 import client
-from shared.protocol import TYPE_MESSAGE, TYPE_SERVER, TYPE_ERROR, TYPE_PRIVATE, TYPE_RECONNECTED, TYPE_DISCONNECTED
+from shared.protocol import *
 
 
 class ChatApp:
@@ -12,6 +13,8 @@ class ChatApp:
         self.root = root
         self.sock = None
         self.username = None
+
+        self._progress_widgets = {}
 
         self._configure_window()
         self._show_login_screen()
@@ -111,7 +114,11 @@ class ChatApp:
         self.chat_display.tag_config("error",   foreground="#f38ba8")  # red
         self.chat_display.tag_config("private", foreground="#f9e2af")  # yellow
         self.chat_display.tag_config("warning", foreground="#fab387")  # orange
+        self.chat_display.tag_config("file",    foreground="#cba6f7")  # purple
 
+        # progress area — file transfers show bars here
+        self.progress_frame = tk.Frame(self.root, bg="#1e1e2e")
+        self.progress_frame.pack(fill=tk.X, padx=10)
         tk.Label(
             self.root,
             text="Tip: /msg <username> <text>  for private messages",
@@ -120,6 +127,14 @@ class ChatApp:
 
         input_frame = tk.Frame(self.root, bg="#1e1e2e", pady=10)
         input_frame.pack(fill=tk.X, padx=10)
+
+        # file button
+        tk.Button(
+            input_frame, text="[+]", command=self._on_file_button,
+            bg="#313244", fg="#cdd6f4", font=("TkDefaultFont", 11, "bold"),
+            relief=tk.FLAT, padx=10, pady=6, cursor="hand2",
+            activebackground="#45475a", activeforeground="#cdd6f4"
+        ).pack(side=tk.LEFT, padx=(0, 6))
 
         self.message_input = tk.Entry(
             input_frame, bg="#313244", fg="#cdd6f4",
@@ -146,6 +161,101 @@ class ChatApp:
         ).pack(fill=tk.X, side=tk.BOTTOM)
 
     # -------------------------------------------------------------------------
+    # File Button
+    # -------------------------------------------------------------------------
+    def _on_file_button(self):
+        filepath = filedialog.askopenfilename(title="Choose a file to send")
+        if not filepath:
+            return
+
+        to_username = simpledialog.askstring(
+            "Send File",
+            f"Send '{os.path.basename(filepath)}' to which user?",
+            parent=self.root
+        )
+        if not to_username or not to_username.strip():
+            return
+
+        to_username = to_username.strip()
+
+        filename = os.path.basename(filepath)
+        client._pending_files[filename] = filepath
+
+        client.send_file_offer(to_username, filepath)
+
+
+    # -------------------------------------------------------------------------
+    # File Accept/Reject Dialog
+    # -------------------------------------------------------------------------
+    def _show_file_offer_dialog(self, from_username, filename, filesize):
+        size_str = self._format_size(filesize)
+        answer = tk.messagebox.askyesno(
+            "Incoming File",
+            f"{from_username} wants to send you:\n\n"
+            f" {filename}  ({size_str})\n\n"
+            f"Accept?",
+            parent=self.root
+        )
+
+        if answer:
+            client.accept_file(from_username, filename, filesize)
+            self._append_message(
+                f"[File] Receiving '{filename}' from {from_username}\n",
+                tag="file"
+            )
+
+
+    # -------------------------------------------------------------------------
+    # Progress Bar Helpers
+    # -------------------------------------------------------------------------
+
+    def _show_progress(self, key, label_text):
+        """Create a progress bar row in the progress frame."""
+        if key in self._progress_widgets:
+            return   # already showing
+
+        frame = tk.Frame(self.progress_frame, bg="#313244", pady=4, padx=6)
+        frame.pack(fill=tk.X, pady=2)
+
+        lbl = tk.Label(frame, text=label_text, bg="#313244",
+                       fg="#cdd6f4", font=("TkDefaultFont", 9), anchor=tk.W)
+        lbl.pack(fill=tk.X)
+
+        bar_bg = tk.Frame(frame, bg="#1e1e2e", height=6)
+        bar_bg.pack(fill=tk.X, pady=(2, 0))
+
+        bar_fill = tk.Frame(bar_bg, bg="#89b4fa", height=6, width=0)
+        bar_fill.place(x=0, y=0, relheight=1.0, relwidth=0.0)
+
+        self._progress_widgets[key] = (frame, bar_fill, lbl, bar_bg)
+
+    def _update_progress(self, key, percent):
+        """Update a progress bar to a given percentage."""
+        if key not in self._progress_widgets:
+            return
+        frame, bar_fill, lbl, bar_bg = self._progress_widgets[key]
+        bar_fill.place(relwidth=percent / 100)
+        lbl.config(text=f"{lbl.cget('text').split('—')[0].strip()} — {percent}%")
+
+    def _remove_progress(self, key):
+        """Remove a progress bar once transfer is complete."""
+        if key not in self._progress_widgets:
+            return
+        frame, bar_fill, lbl, bar_bg = self._progress_widgets[key]
+        frame.destroy()
+        del self._progress_widgets[key]
+
+    @staticmethod
+    def _format_size(size_bytes):
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / 1024 ** 2:.1f} MB"
+
+
+    # -------------------------------------------------------------------------
     # Send & Receive
     # -------------------------------------------------------------------------
 
@@ -168,6 +278,20 @@ class ChatApp:
             to_username = parts[1]
             private_text = parts[2]
             client.send_private(self.sock, to_username, private_text)
+
+        elif text.startswith("/file "):
+            # /file <username>  — alternative to the [+] button
+            parts = text.split(" ", 1)
+            if len(parts) < 2:
+                self._append_message("Usage: /file <username>\n", tag="error")
+                self.message_input.delete(0, tk.END)
+                return
+            to_username = parts[1].strip()
+            filepath = filedialog.askopenfilename(title="Choose a file to send")
+            if filepath:
+                filename = os.path.basename(filepath)
+                client._pending_files[filename] = filepath
+                client.send_file_offer(to_username, filepath)
 
         else:
             # for send the message we call the send_message function (client.py)
@@ -213,6 +337,62 @@ class ChatApp:
                         f"[Private msg from {packet['from']}]: {packet['text']}\n",
                         tag="private"
                     )
+            # ── file events ───────────────────────────────────────────────────
+            elif packet_type == TYPE_FILE_OFFER:
+                # incoming file offer — show accept/reject dialog
+                self._show_file_offer_dialog(
+                    packet.get("from"),
+                    packet.get("filename"),
+                    packet.get("filesize")
+                )
+
+            elif packet_type == TYPE_FILE_REJECT:
+                filename = packet.get("filename")
+                frm      = packet.get("from", "")
+                self._append_message(f"[File] {frm} rejected '{filename}'.\n", tag="file")
+                self._remove_progress(filename)
+
+            elif packet_type == TYPE_FILE_DONE:
+                filename = packet.get("filename")
+                self._append_message(
+                    f"[File] '{filename}' transfer complete.\n", tag="file"
+                )
+                self._remove_progress(filename)
+
+            elif packet_type == "file_waiting":
+                filename = packet.get("filename")
+                to       = packet.get("to")
+                self._append_message(
+                    f"[File] Waiting for {to} to accept '{filename}'...\n", tag="file"
+                )
+
+            elif packet_type == "file_progress":
+                filename = packet.get("filename")
+                percent  = packet.get("percent", 0)
+                frm      = packet.get("from", packet.get("to", ""))
+                label    = f"{'Sending' if 'to' in packet else 'Receiving'} '{filename}' {'to' if 'to' in packet else 'from'} {frm}"
+
+                if filename not in self._progress_widgets:
+                    self._show_progress(filename, label)
+                self._update_progress(filename, percent)
+
+            elif packet_type == "file_sent":
+                filename = packet.get("filename")
+                to       = packet.get("to")
+                self._append_message(f"[File] '{filename}' sent to {to}.\n", tag="file")
+                self._remove_progress(filename)
+
+            elif packet_type == "file_received":
+                filename = packet.get("filename")
+                filepath = packet.get("filepath")
+                frm      = packet.get("from")
+                self._append_message(
+                    f"[File] '{filename}' from {frm} saved to downloads/\n",
+                    tag="file"
+                )
+                self._remove_progress(filename)
+
+            # ── connection ────────────────────────────────────────────────────
             elif packet_type == TYPE_DISCONNECTED:
                 text = packet.get("text", "Disconnected")
                 self._append_message(f"\n[!] {text}\n", tag="warning")
@@ -254,6 +434,7 @@ class ChatApp:
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    from tkinter import messagebox
     root = tk.Tk()
     app = ChatApp(root)
     root.mainloop()
