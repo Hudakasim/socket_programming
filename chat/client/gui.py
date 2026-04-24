@@ -203,6 +203,12 @@ class ChatApp:
                 f"[File] Receiving '{filename}' from {from_username}\n",
                 tag="file"
             )
+        else:
+            client.reject_file(from_username, filename)
+            self._append_message(
+                f"[File] You rejected '{filename}' from {from_username}.\n",
+                tag="warning"
+            )
 
 
     # -------------------------------------------------------------------------

@@ -244,10 +244,10 @@ def handle_client(conn, addr):
 
         elif packet_type == TYPE_FILE_REJECT:
             from_username = packet.get("to")
-            filename      = packet.get("filename")
+            filename = packet.get("filename")
 
             offer_key = (from_username, filename)
-            pending_offers.pop(offer_key, None)
+            offer = pending_offers.pop(offer_key, None)
 
             sender_conn = get_conn_by_username(from_username)
             if sender_conn:
